@@ -1,0 +1,20 @@
+FROM python:3.12.10
+
+WORKDIR /app
+
+COPY requirements.txt .
+
+RUN pip install --no-cache-dir \
+        --index-url https://download.pytorch.org/whl/cpu \
+        torch==2.14.0+cpu \
+    && pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+COPY entrypoint.sh /entrypoint.sh
+
+# delete CR characters
+RUN sed -i 's/\r$//' /entrypoint.sh \
+    && chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["python", "main.py"]
