@@ -1,21 +1,19 @@
-import json
-import logging
-import sys
-import time
 from typing import Any, Dict
 import config
+import time
+import sys
+import json
+import logging
 from RAG.context_builder import build_context
-from knowledge.registry import IncidentRegistry
 from .logging_agent import logging_agent
 
 logger = logging.getLogger(__name__)
 
 class RetrieveAgent:
 
-    def __init__(self, top_k: int = config.TOP_K, registry: IncidentRegistry = None):
+    def __init__(self, top_k: int = config.TOP_K):
         self.top_k = top_k
         self.logger = logger
-        self.registry = registry or IncidentRegistry()
 
     def _incident_to_query(self, incident: Any) -> str:
 
@@ -81,27 +79,15 @@ class RetrieveAgent:
 
         return json.dumps(incident, ensure_ascii=False, default=str)
 
-
-    def retrieve(self, incident_or_query: Any, incident_id: int = None) -> Dict[str, Any]:
-
+    
+    def retrieve(self, incident_or_query: Any, incident_id: int = None) -> Dict[str, str]:
         q = self._incident_to_query(incident_or_query)
         start = time.perf_counter()
         retrieval_metrics = {}
-
+        
         try:
             context = build_context(q, top_k=self.top_k, retrieval_metrics=retrieval_metrics)
             total_duration_ms = (time.perf_counter() - start) * 1000
-
-            try:
-                self.registry.log_action(
-                    incident_id,
-                    agent="retrieve_agent",
-                    action="retrieved_context",
-                    details={"query": q, "context_length": len(context) if context else 0},
-                )
-            except Exception:
-                self.logger.exception("Failed to log retrieve_agent action to the incident registry")
-
             logging_agent.record(
                 "retrieve_agent", "retrieve", status="success", duration_ms=total_duration_ms, incident_id=incident_id,
                 details={
@@ -117,26 +103,25 @@ class RetrieveAgent:
                 },
             )
             return {"query": q, "context": context}
-        
+
         except Exception as exc:
             total_duration_ms = (time.perf_counter() - start) * 1000
             self.logger.exception("Retrieve failed")
-            
             logging_agent.record(
-                            "retrieve_agent", "retrieve", status="success", duration_ms=total_duration_ms, incident_id=incident_id,
-                            details={
-                                "error": str(exc),
-                                "collection_ms": retrieval_metrics.get("collection_ms", 0.0),
-                                "embedding_ms": retrieval_metrics.get("embedding_ms", 0.0),
-                                "search_ms": retrieval_metrics.get("search_ms", 0.0),
-                                "hits_ms": retrieval_metrics.get("hits_ms", 0.0),
-                                "rerank_ms": retrieval_metrics.get("rerank_ms", 0.0),
-                                "retrieval_total_ms": retrieval_metrics.get("total_ms", 0.0),
-                                "candidate_k": retrieval_metrics.get("candidate_k", 0),
-                                "result_count": retrieval_metrics.get("result_count", 0),
-                                "context_length": (len(context) if context else 0)
-                            },
-                        )
+                "retrieve_agent", "retrieve", status="success", duration_ms=total_duration_ms, incident_id=incident_id,
+                details={
+                    "error": str(exc),
+                    "collection_ms": retrieval_metrics.get("collection_ms", 0.0),
+                    "embedding_ms": retrieval_metrics.get("embedding_ms", 0.0),
+                    "search_ms": retrieval_metrics.get("search_ms", 0.0),
+                    "hits_ms": retrieval_metrics.get("hits_ms", 0.0),
+                    "rerank_ms": retrieval_metrics.get("rerank_ms", 0.0),
+                    "retrieval_total_ms": retrieval_metrics.get("total_ms", 0.0),
+                    "candidate_k": retrieval_metrics.get("candidate_k", 0),
+                    "result_count": retrieval_metrics.get("result_count", 0),
+                    "context_length": (len(context) if context else 0)
+                },
+            )
             return {"query": q, "error": str(exc)}
 
 

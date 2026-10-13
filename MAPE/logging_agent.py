@@ -52,7 +52,7 @@ class LoggingAgent:
         self._events_counter, self._duration_histogram = _build_meter()
 
     def clear(self):
-        with _cursor(config.POSTGRES_OPERATIONAL_DB) as cur:
+        with _cursor(config.POSTGRES_KNOWLEDGE_DB) as cur:
             cur.execute("TRUNCATE TABLE agent_metrics")
 
 
@@ -67,7 +67,7 @@ class LoggingAgent:
     ) -> None:
 
         try:
-            with _cursor(config.POSTGRES_OPERATIONAL_DB) as cur:
+            with _cursor(config.POSTGRES_KNOWLEDGE_DB) as cur:
                 cur.execute(
                     """
                     INSERT INTO agent_metrics (component, action, status, duration_ms, incident_id, details)
@@ -102,7 +102,7 @@ class LoggingAgent:
             self.record(component, action, status=status, duration_ms=duration_ms, incident_id=incident_id, details=details)
 
     def tail(self, limit: int = 20):
-        with _cursor(config.POSTGRES_OPERATIONAL_DB) as cur:
+        with _cursor(config.POSTGRES_KNOWLEDGE_DB) as cur:
             cur.execute("SELECT * FROM agent_metrics ORDER BY created_at DESC LIMIT %s", (limit,))
             return cur.fetchall()
 

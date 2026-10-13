@@ -39,12 +39,21 @@ class KnowledgeBaseStore:
                 cur.execute("SELECT * FROM kb_documents ORDER BY category, source_path")
             return cur.fetchall()
 
+    def list_documents_after(self, document_id: int) -> List[Dict[str, Any]]:
+        with cursor(config.POSTGRES_KNOWLEDGE_DB) as cur:
+            cur.execute(
+                "SELECT * FROM kb_documents WHERE id > %s ORDER BY id",
+                (document_id,),
+            )
+            return cur.fetchall()
+
 
 class IncidentHistoryStore:
 
     def add(
         self,
         incident_id: Optional[int],
+        metadata: Dict[str, Any],
         source: str = "",
         summary: str = "",
         description: str = "",
@@ -53,12 +62,19 @@ class IncidentHistoryStore:
         lessons_learned: str = "",
         raw_payload: Optional[Dict[str, Any]] = None,
     ) -> int:
+        if not isinstance(metadata, dict):
+            raise ValueError("incident history metadata must contain a customer")
+        customer = metadata.get("customer")
+        if not isinstance(customer, str) or not customer.strip():
+            raise ValueError("incident history metadata must contain a non-empty customer")
+        metadata = {**metadata, "customer": customer.strip()}
+
         with cursor(config.POSTGRES_KNOWLEDGE_DB) as cur:
             cur.execute(
                 """
                 INSERT INTO incident_history
-                    (incident_id, source, summary, description, severity, resolution, lessons_learned, raw_payload)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    (incident_id, source, summary, description, severity, resolution, lessons_learned, raw_payload, metadata)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
                 (
@@ -70,6 +86,7 @@ class IncidentHistoryStore:
                     resolution,
                     lessons_learned,
                     json.dumps(raw_payload or {}),
+                    json.dumps(metadata),
                 ),
             )
             return cur.fetchone()["id"]
@@ -78,3 +95,45 @@ class IncidentHistoryStore:
         with cursor(config.POSTGRES_KNOWLEDGE_DB) as cur:
             cur.execute("SELECT * FROM incident_history ORDER BY created_at DESC LIMIT %s", (limit,))
             return cur.fetchall()
+
+    def list_history_after(self, history_id: int) -> List[Dict[str, Any]]:
+        with cursor(config.POSTGRES_KNOWLEDGE_DB) as cur:
+            cur.execute(
+                "SELECT * FROM incident_history WHERE id > %s ORDER BY id",
+                (history_id,),
+            )
+            return cur.fetchall()
+
+
+class RagIndexStateStore:
+    def get_cursor(self, source: str) -> int:
+        with cursor(config.POSTGRES_KNOWLEDGE_DB) as cur:
+            cur.execute(
+                """
+                INSERT INTO rag_index_cursors (source, last_id)
+                VALUES (%s, 0)
+                ON CONFLICT (source) DO NOTHING
+                """,
+                (source,),
+            )
+            cur.execute(
+                "SELECT last_id FROM rag_index_cursors WHERE source = %s",
+                (source,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                raise RuntimeError(f"Unable to load RAG index cursor for {source}")
+            return row["last_id"]
+
+    def advance_cursor(self, source: str, last_id: int) -> None:
+        with cursor(config.POSTGRES_KNOWLEDGE_DB) as cur:
+            cur.execute(
+                """
+                INSERT INTO rag_index_cursors (source, last_id)
+                VALUES (%s, %s)
+                ON CONFLICT (source) DO UPDATE
+                SET last_id = GREATEST(rag_index_cursors.last_id, EXCLUDED.last_id),
+                    updated_at = now()
+                """,
+                (source, last_id),
+            )

@@ -7,6 +7,8 @@ CATEGORY_DIRS = {
     "attack_patterns": os.path.join(config.BASE_DIR, "attack_patterns"),
     "observables": os.path.join(config.BASE_DIR, "observables"),
     "procedures": os.path.join(config.BASE_DIR, "procedures"),
+    "policies": config.POLICIES_DIR,
+    "actions_catalog": config.ACTIONS_CATALOG_DIR,
 }
 
 SUPPORTED_EXTENSIONS = (".md", ".txt", ".json")
