@@ -53,6 +53,7 @@ class IncidentHistoryStore:
     def add(
         self,
         incident_id: Optional[int],
+        customer_id: int,
         metadata: Dict[str, Any],
         source: str = "",
         summary: str = "",
@@ -62,13 +63,9 @@ class IncidentHistoryStore:
         lessons_learned: str = "",
         raw_payload: Optional[Dict[str, Any]] = None,
     ) -> int:
-        if not isinstance(metadata, dict):
-            raise ValueError("incident history metadata must contain a customer")
-        customer = metadata.get("customer")
-        if not isinstance(customer, str) or not customer.strip():
-            raise ValueError("incident history metadata must contain a non-empty customer")
-        metadata = {**metadata, "customer": customer.strip()}
-
+        if isinstance(customer_id, bool) or not isinstance(customer_id, int) or customer_id <= 0:
+            raise ValueError("customer_id must be a positive integer")
+        
         with cursor(config.POSTGRES_KNOWLEDGE_DB) as cur:
             cur.execute(
                 """
@@ -80,13 +77,13 @@ class IncidentHistoryStore:
                 (
                     incident_id,
                     source,
+                    json.dumps({"customer": customer_id}),
                     summary,
                     description,
                     severity,
                     resolution,
                     lessons_learned,
                     json.dumps(raw_payload or {}),
-                    json.dumps(metadata),
                 ),
             )
             return cur.fetchone()["id"]

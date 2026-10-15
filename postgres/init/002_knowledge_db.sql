@@ -32,12 +32,9 @@ CREATE TABLE IF NOT EXISTS incident_history (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-ALTER TABLE incident_history
-    ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
-
 CREATE INDEX IF NOT EXISTS idx_incident_history_created_at ON incident_history (created_at);
 
-CREATE TABLE IF NOT EXISTS rag_index_cursors (
+CREATE TABLE IF NOT EXISTS index_cursors (
     source TEXT PRIMARY KEY,
     last_id BIGINT NOT NULL DEFAULT 0 CHECK (last_id >= 0),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()

@@ -11,10 +11,19 @@ def main():
         history_cursor,
     )
     records = build_chunks(documents)
+    skipped_history = 0
+    for row in history_rows:
+        metadata = row.get("metadata")
+        customer = metadata.get("customer") if isinstance(metadata, dict) else None
+        if isinstance(customer, bool) or not isinstance(customer, int) or customer <= 0:
+            skipped_history += 1
     print(
         f"Found {len(knowledge_rows)} new PostgreSQL knowledge documents and "
         f"{len(history_rows)} new incident history records."
     )
+
+    if skipped_history:
+        print(f"Skipped {skipped_history} history records without valid customer metadata; they are excluded from retrieval until assigned and reindexed.")
 
     if records:
         total = index_records(records)
