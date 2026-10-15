@@ -15,7 +15,7 @@ class BuildIndexTests(unittest.TestCase):
             [{"id": 14}],
         ),
     )
-    @patch("RAG.build_index.RagIndexStateStore")
+    @patch("RAG.build_index.IndexStateStore")
     def test_uses_postgres_cursors_and_advances_after_successful_index(
         self,
         state_store_class,

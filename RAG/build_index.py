@@ -1,9 +1,9 @@
 from .ingestion import build_chunks, load_new_database_documents
-from .knowledge_store import RagIndexStateStore
+from .knowledge_store import IndexStateStore
 from .vector_store import index_records
 
 def main():
-    state_store = RagIndexStateStore()
+    state_store = IndexStateStore()
     knowledge_cursor = state_store.get_cursor("kb_documents")
     history_cursor = state_store.get_cursor("incident_history")
     documents, knowledge_rows, history_rows = load_new_database_documents(

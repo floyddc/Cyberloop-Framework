@@ -3,6 +3,7 @@ import config
 import time
 import sys
 import json
+import logging as logging
 import logging as _logging
 import argparse
 from RAG.context_builder import build_context
@@ -97,7 +98,7 @@ class RetrieveAgent:
             if isinstance(customer_id, bool) or not isinstance(customer_id, int) or customer_id <= 0:
                 raise ValueError("customer_id must be a positive integer for tenant-scoped retrieval")
             
-            context = build_context(q, top_k=self.top_k, retrieval_metrics=retrieval_metrics)
+            context = build_context(q, customer_id=customer_id, top_k=self.top_k, retrieval_metrics=retrieval_metrics)
             total_duration_ms = (time.perf_counter() - start) * 1000
             logging_agent.record(
                 "retrieve_agent", "retrieve", status="success", duration_ms=total_duration_ms, incident_id=incident_id,

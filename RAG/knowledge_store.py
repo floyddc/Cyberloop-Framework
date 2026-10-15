@@ -54,7 +54,6 @@ class IncidentHistoryStore:
         self,
         incident_id: Optional[int],
         customer_id: int,
-        metadata: Dict[str, Any],
         source: str = "",
         summary: str = "",
         description: str = "",
@@ -70,7 +69,7 @@ class IncidentHistoryStore:
             cur.execute(
                 """
                 INSERT INTO incident_history
-                    (incident_id, source, summary, description, severity, resolution, lessons_learned, raw_payload, metadata)
+                    (incident_id, source, metadata, summary, description, severity, resolution, lessons_learned, raw_payload)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
@@ -102,19 +101,19 @@ class IncidentHistoryStore:
             return cur.fetchall()
 
 
-class RagIndexStateStore:
+class IndexStateStore:
     def get_cursor(self, source: str) -> int:
         with cursor(config.POSTGRES_KNOWLEDGE_DB) as cur:
             cur.execute(
                 """
-                INSERT INTO rag_index_cursors (source, last_id)
+                INSERT INTO index_cursors (source, last_id)
                 VALUES (%s, 0)
                 ON CONFLICT (source) DO NOTHING
                 """,
                 (source,),
             )
             cur.execute(
-                "SELECT last_id FROM rag_index_cursors WHERE source = %s",
+                "SELECT last_id FROM index_cursors WHERE source = %s",
                 (source,),
             )
             row = cur.fetchone()
@@ -126,10 +125,10 @@ class RagIndexStateStore:
         with cursor(config.POSTGRES_KNOWLEDGE_DB) as cur:
             cur.execute(
                 """
-                INSERT INTO rag_index_cursors (source, last_id)
+                INSERT INTO index_cursors (source, last_id)
                 VALUES (%s, %s)
                 ON CONFLICT (source) DO UPDATE
-                SET last_id = GREATEST(rag_index_cursors.last_id, EXCLUDED.last_id),
+                SET last_id = GREATEST(index_cursors.last_id, EXCLUDED.last_id),
                     updated_at = now()
                 """,
                 (source, last_id),

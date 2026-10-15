@@ -117,7 +117,7 @@ applicare una volta entrambe le migrazioni:
 ```powershell
 Get-Content postgres/migrations/001_incident_history_customer_metadata.sql |
   docker compose exec -T postgres psql -U cyberresponse -d knowledge
-Get-Content postgres/migrations/002_rag_index_cursors.sql |
+Get-Content postgres/migrations/002_index_cursors.sql |
   docker compose exec -T postgres psql -U cyberresponse -d knowledge
 ```
 
