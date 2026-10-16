@@ -24,8 +24,51 @@ python -m pip install -r python/requirements.txt
 Per usare il PostgreSQL locale incluso:
 
 ```powershell
-docker compose up -d postgres
+docker compose up -d postgres rag-service
 ```
+
+Il servizio HTTP RAG e' raggiungibile localmente su `http://localhost:8000`.
+Durante l'avvio carica embedding e reranker; `GET /health` risponde `200`
+solo al termine del caricamento e `503` prima che i modelli siano pronti.
+L'indice Chroma e la cache dei modelli sono persistenti nei volumi Docker.
+
+`POST /retrieve` riceve un customer numerico, la query e i limiti separati:
+
+```json
+{
+  "customer": 123,
+  "query": "suspicious PowerShell execution",
+  "k_cases": 3,
+  "k_kb": 5
+}
+```
+
+Risponde con una lista di risultati `{type, id, title, text, score}`.
+I case storici sono sempre filtrati per customer; la knowledge base e'
+condivisa. `POST /index/cases` accetta un batch di case con `customer`,
+`title` e `text`; `id` e' facoltativo in creazione e va fornito per aggiornare
+un case esistente:
+
+La route `/retrieve` delega al `RetrieveAgent`, che usa il retriever RAG per
+generare l'embedding, cercare separatamente case e knowledge base in Chroma e
+riordinare i risultati con il reranker.
+
+```json
+{
+  "cases": [
+    {
+      "id": 42,
+      "customer": 123,
+      "title": "Suspicious PowerShell execution",
+      "text": "Encoded command observed; endpoint isolated."
+    }
+  ]
+}
+```
+
+Senza `id`, il servizio assegna e restituisce un ID numerico. Eliminare un
+case con `DELETE /index/cases/{id}`. Le operazioni di indicizzazione aggiornano
+sia `incident_history` in PostgreSQL sia i chunk corrispondenti in Chroma.
 
 I parametri sono configurabili tramite `POSTGRES_HOST`, `POSTGRES_PORT`,
 `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_KNOWLEDGE_DB`, `OLLAMA_HOST`,

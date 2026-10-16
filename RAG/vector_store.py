@@ -66,3 +66,15 @@ def index_records(records: List[dict], reset: bool = False) -> int:
             progress.update(len(batch))
 
     return total
+
+
+def replace_source_records(source: str, records: List[dict]) -> int:
+    collection = get_collection()
+    existing = collection.get(where={"source": source})
+    existing_ids = set(existing.get("ids", []))
+    indexed = index_records(records)
+    current = collection.get(where={"source": source})
+    stale_ids = existing_ids.difference(current.get("ids", []))
+    if stale_ids:
+        collection.delete(ids=sorted(stale_ids))
+    return indexed

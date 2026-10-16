@@ -1,13 +1,11 @@
 from typing import Any, Dict, Optional
 import config
-import time
-import sys
 import json
 import logging as logging
 import logging as _logging
 import argparse
 from RAG.context_builder import build_context
-from .logging_agent import logging_agent
+from RAG.retriever import retrieve_results as retrieve_rag_results
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +14,20 @@ class RetrieveAgent:
     def __init__(self, top_k: int = config.TOP_K):
         self.top_k = top_k
         self.logger = logger
+
+    def retrieve_results(
+        self,
+        query: str,
+        customer_id: int,
+        k_cases: int,
+        k_kb: int,
+    ) -> list[dict]:
+        return retrieve_rag_results(
+            query,
+            customer_id=customer_id,
+            k_cases=k_cases,
+            k_kb=k_kb,
+        )
 
     def _incident_to_query(self, incident: Any) -> str:
 
@@ -90,50 +102,17 @@ class RetrieveAgent:
                 raise ValueError("customer_id does not match the incident tenant")
             customer_id = incident_customer_id
 
-        start = time.perf_counter()
-        retrieval_metrics = {}
         context = ""
         
         try:
             if isinstance(customer_id, bool) or not isinstance(customer_id, int) or customer_id <= 0:
                 raise ValueError("customer_id must be a positive integer for tenant-scoped retrieval")
             
-            context = build_context(q, customer_id=customer_id, top_k=self.top_k, retrieval_metrics=retrieval_metrics)
-            total_duration_ms = (time.perf_counter() - start) * 1000
-            logging_agent.record(
-                "retrieve_agent", "retrieve", status="success", duration_ms=total_duration_ms, incident_id=incident_id,
-                details={
-                    "collection_ms": retrieval_metrics.get("collection_ms", 0.0),
-                    "embedding_ms": retrieval_metrics.get("embedding_ms", 0.0),
-                    "search_ms": retrieval_metrics.get("search_ms", 0.0),
-                    "hits_ms": retrieval_metrics.get("hits_ms", 0.0),
-                    "rerank_ms": retrieval_metrics.get("rerank_ms", 0.0),
-                    "retrieval_total_ms": retrieval_metrics.get("total_ms", 0.0),
-                    "candidate_k": retrieval_metrics.get("candidate_k", 0),
-                    "result_count": retrieval_metrics.get("result_count", 0),
-                    "context_length": (len(context) if context else 0)
-                },
-            )
+            context = build_context(q, customer_id=customer_id, top_k=self.top_k)
             return {"query": q, "context": context}
 
         except Exception as exc:
-            total_duration_ms = (time.perf_counter() - start) * 1000
             self.logger.exception("Retrieve failed")
-            logging_agent.record(
-                "retrieve_agent", "retrieve", status="success", duration_ms=total_duration_ms, incident_id=incident_id,
-                details={
-                    "error": str(exc),
-                    "collection_ms": retrieval_metrics.get("collection_ms", 0.0),
-                    "embedding_ms": retrieval_metrics.get("embedding_ms", 0.0),
-                    "search_ms": retrieval_metrics.get("search_ms", 0.0),
-                    "hits_ms": retrieval_metrics.get("hits_ms", 0.0),
-                    "rerank_ms": retrieval_metrics.get("rerank_ms", 0.0),
-                    "retrieval_total_ms": retrieval_metrics.get("total_ms", 0.0),
-                    "candidate_k": retrieval_metrics.get("candidate_k", 0),
-                    "result_count": retrieval_metrics.get("result_count", 0),
-                    "context_length": (len(context) if context else 0)
-                },
-            )
             return {"query": q, "error": str(exc)}
 
 

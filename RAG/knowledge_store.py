@@ -50,6 +50,69 @@ class KnowledgeBaseStore:
 
 class IncidentHistoryStore:
 
+    def upsert_case(
+        self,
+        case_id: Optional[int],
+        customer_id: int,
+        title: str,
+        text: str,
+    ) -> int:
+        if isinstance(customer_id, bool) or not isinstance(customer_id, int) or customer_id <= 0:
+            raise ValueError("customer_id must be a positive integer")
+        if case_id is not None and (isinstance(case_id, bool) or not isinstance(case_id, int) or case_id <= 0):
+            raise ValueError("case_id must be a positive integer")
+
+        values = (
+            json.dumps({"customer": customer_id}),
+            title,
+            text,
+            json.dumps({"title": title, "text": text}),
+        )
+        with cursor(config.POSTGRES_KNOWLEDGE_DB) as cur:
+            if case_id is None:
+                cur.execute(
+                    """
+                    INSERT INTO incident_history
+                        (source, metadata, summary, description, raw_payload)
+                    VALUES ('http-api', %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    values,
+                )
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO incident_history
+                        (id, source, metadata, summary, description, raw_payload)
+                    VALUES (%s, 'http-api', %s, %s, %s, %s)
+                    ON CONFLICT (id) DO UPDATE
+                    SET source = EXCLUDED.source,
+                        metadata = EXCLUDED.metadata,
+                        summary = EXCLUDED.summary,
+                        description = EXCLUDED.description,
+                        raw_payload = EXCLUDED.raw_payload
+                    RETURNING id
+                    """,
+                    (case_id, *values),
+                )
+                cur.execute(
+                    """
+                    SELECT setval(
+                        pg_get_serial_sequence('incident_history', 'id'),
+                        GREATEST(
+                            (SELECT last_value FROM incident_history_id_seq),
+                            (SELECT COALESCE(MAX(id), 1) FROM incident_history)
+                        )
+                    )
+                    """
+                )
+            return cur.fetchone()["id"]
+
+    def delete_case(self, case_id: int) -> bool:
+        with cursor(config.POSTGRES_KNOWLEDGE_DB) as cur:
+            cur.execute("DELETE FROM incident_history WHERE id = %s", (case_id,))
+            return cur.rowcount > 0
+
     def add(
         self,
         incident_id: Optional[int],

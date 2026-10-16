@@ -24,7 +24,12 @@ def _knowledge_documents(rows: List[Dict[str, Any]]) -> List[SourceDocument]:
                 path=row["source_path"],
                 category=row["category"],
                 content=row["content"],
-                metadata={**metadata, "scope": "global"},
+                metadata={
+                    **metadata,
+                    "scope": "global",
+                    "title": row.get("title") or row["source_path"],
+                    "record_id": row["id"],
+                },
             )
         )
     return documents
@@ -50,7 +55,13 @@ def _history_documents(rows: List[Dict[str, Any]]) -> List[SourceDocument]:
                     path=f"incident_history::{row['id']}",
                     category="incident_history",
                     content=content,
-                    metadata={**metadata, "customer": customer, "scope": "customer"},
+                    metadata={
+                        **metadata,
+                        "customer": customer,
+                        "scope": "customer",
+                        "title": row.get("summary") or f"Case {row['id']}",
+                        "record_id": row["id"],
+                    },
                 )
             )
     return documents
