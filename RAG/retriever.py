@@ -1,166 +1,222 @@
+import logging
+import math
 import re
-import time
-from typing import Any, Dict, List, Optional
+from collections import Counter
+from typing import List, Optional
 import config
 from .embeddings import embed_query
 from .reranker import rerank
-from .text_cleaner import clean_retrieval_text
+from .text_cleaner import clean_retrieval_text, split_sentences
 from .vector_store import get_collection
 
-def retrieve(query: str, customer_id: int, top_k: int = config.TOP_K, metrics: Optional[Dict[str, Any]] = None) -> List[dict]:
-    
+logger = logging.getLogger(__name__)
+
+_TECHNIQUE_ID = re.compile(r"(?<![A-Za-z0-9])[Tt](\d{4})(?:[._](\d{3}))?(?!\d)")
+_TOKEN = re.compile(r"[a-z0-9]+")
+_LEXICAL_STOP_WORDS = {
+    "a", "an", "and", "are", "as", "at", "by", "detected", "detection",
+    "for", "from", "high", "in", "is", "of", "on", "or", "the", "to",
+    "with", "alert", "incident", "threat", "suspicious", "malicious",
+    "source", "description", "title", "file", "origin", "log", "message",
+    "security", "event", "user",
+}
+
+
+def _diversity_key(hit: dict) -> str:
+    # the same MITRE technique can come from several sources/chunks: treat it as one result
+    metadata = hit["metadata"]
+    source = str(metadata.get("source") or "")
+    match = _TECHNIQUE_ID.search(source) or _TECHNIQUE_ID.search(hit["text"][:300])
+    if not match:
+        return source
+    return f"T{match.group(1)}" + (f".{match.group(2)}" if match.group(2) else "")
+
+
+def _hit_key(hit: dict) -> str:
+    metadata = hit["metadata"]
+    source = metadata.get("source")
+    chunk_index = metadata.get("chunk_index")
+    if source is not None and chunk_index is not None:
+        return f"{source}::{chunk_index}"
+    return hit["text"]
+
+
+def lexical_rank(query: str, hits: List[dict]) -> List[dict]:
+    """Rank the vector candidates with BM25 over informative query terms."""
+    query_terms = [
+        token for token in _TOKEN.findall(query.casefold())
+        if token not in _LEXICAL_STOP_WORDS and len(token) > 1
+    ]
+    if not query_terms or not hits:
+        return list(hits)
+
+    documents = [
+        [
+            token for token in _TOKEN.findall(hit["text"].casefold())
+            if token not in _LEXICAL_STOP_WORDS and len(token) > 1
+        ]
+        for hit in hits
+    ]
+    document_frequency = Counter(
+        token for token in set(term for term in query_terms)
+        for document in documents if token in document
+    )
+    total_documents = len(documents)
+    average_length = sum(map(len, documents)) / max(total_documents, 1)
+    scores = []
+    for original_rank, (hit, terms) in enumerate(zip(hits, documents)):
+        frequencies = Counter(terms)
+        score = 0.0
+        for token in query_terms:
+            frequency = frequencies[token]
+            if not frequency:
+                continue
+            df = document_frequency[token]
+            inverse_frequency = math.log(1 + (total_documents - df + 0.5) / (df + 0.5))
+            denominator = frequency + 1.2 * (
+                1 - 0.75 + 0.75 * len(terms) / max(average_length, 1)
+            )
+            score += inverse_frequency * frequency * 2.2 / denominator
+        scores.append((score, original_rank, hit))
+    scores.sort(key=lambda item: (-item[0], item[1]))
+    for rank, (score, _, hit) in enumerate(scores, start=1):
+        hit["lexical_score"] = score
+        hit["lexical_rank"] = rank
+    return [hit for _, _, hit in scores]
+
+
+def select_hits(
+    ranked_hits: List[dict],
+    top_k: int,
+    min_score: Optional[float] = None,
+    margin: Optional[float] = None,
+) -> List[dict]:
+
+    min_score = config.RERANK_MIN_SCORE if min_score is None else min_score
+    margin = config.RERANK_SCORE_MARGIN if margin is None else margin
+    selected: List[dict] = []
+    seen = set()
+    for hit in ranked_hits:
+        key = _diversity_key(hit)
+        if key in seen:
+            continue
+        score = hit.get("rerank_score")
+        if selected and score is not None:
+            best = selected[0].get("rerank_score")
+            if (min_score is not None and score < min_score) or (
+                margin is not None and best is not None and score < best - margin
+            ):
+                break
+        seen.add(key)
+        selected.append(hit)
+        if len(selected) >= top_k:
+            break
+    return selected
+
+
+_RRF_K = 60
+
+
+def fuse_rankings(
+    vector_hits: List[dict],
+    reranked_hits: List[dict],
+    lexical_hits: Optional[List[dict]] = None,
+    rerank_weight: Optional[float] = None,
+    lexical_weight: Optional[float] = None,
+) -> List[dict]:
+
+    rerank_weight = config.RERANK_FUSION_WEIGHT if rerank_weight is None else rerank_weight
+    lexical_weight = config.LEXICAL_FUSION_WEIGHT if lexical_weight is None else lexical_weight
+    vector_rank = {_hit_key(hit): rank for rank, hit in enumerate(vector_hits, start=1)}
+    lexical_rank_by_hit = {
+        _hit_key(hit): rank for rank, hit in enumerate(lexical_hits or [], start=1)
+    }
+    for rank, hit in enumerate(reranked_hits, start=1):
+        key = _hit_key(hit)
+        position = vector_rank.get(key, len(vector_hits) + 1)
+        lexical_position = lexical_rank_by_hit.get(key, len(vector_hits) + 1)
+        hit["vector_rank"] = position
+        hit["lexical_rank"] = lexical_position
+        hit["fused_score"] = (
+            1 / (_RRF_K + position)
+            + rerank_weight / (_RRF_K + rank)
+            + lexical_weight / (_RRF_K + lexical_position)
+        )
+    return sorted(reranked_hits, key=lambda hit: hit["fused_score"], reverse=True)
+
+
+def merge_chunks(current: str, following: str, title: Optional[str] = None) -> str:
+
+    if title and following.startswith(f"{title}: "):
+        following = following[len(title) + 2:]
+    current_sentences = split_sentences(current)
+    following_sentences = split_sentences(following)
+    for shared in range(min(len(current_sentences), len(following_sentences)), 0, -1):
+        if current_sentences[-shared:] == following_sentences[:shared]:
+            following_sentences = following_sentences[shared:]
+            break
+    return " ".join([current, *following_sentences]).strip()
+
+
+def expand_hits(collection, hits: List[dict], count: int) -> None:
+
+    for hit in hits[:count]:
+        metadata = hit["metadata"]
+        index = metadata.get("chunk_index")
+        source = metadata.get("source")
+        if not isinstance(index, int) or isinstance(index, bool) or not source:
+            continue
+        try:
+            found = collection.get(ids=[f"{source}::{index + 1}"], include=["documents"])
+            documents = found.get("documents") or []
+        except Exception:
+            logger.warning("Could not load the chunk following %s::%s", source, index, exc_info=True)
+            continue
+        if documents:
+            hit["text"] = merge_chunks(hit["text"], clean_retrieval_text(documents[0]), metadata.get("title"))
+
+
+def retrieve(
+    query: str,
+    customer_id: int,
+    top_k: int = config.TOP_K,
+) -> List[dict]:
     if isinstance(customer_id, bool) or not isinstance(customer_id, int) or customer_id <= 0:
         raise ValueError("customer_id must be a positive integer for tenant-scoped retrieval")
 
-    total_start = time.perf_counter()
-
     # get ChromaDB collection
-    start = time.perf_counter()
     collection = get_collection()
-    collection_ms = (time.perf_counter() - start) * 1000
 
     if collection.count() == 0:
-        total_ms = (time.perf_counter() - total_start) * 1000
-        if metrics is not None:
-            metrics.update({
-                "collection_ms": collection_ms,
-                "embedding_ms": 0.0,
-                "search_ms": 0.0,
-                "hits_ms": 0.0,
-                "rerank_ms": 0.0,
-                "total_ms": total_ms,
-                "candidate_k": 0,
-                "result_count": 0,
-            })
         return []
 
     candidate_k = min(max(top_k, config.RERANK_CANDIDATES), collection.count())
 
     # generate query embedding
-    start = time.perf_counter()
     query_embedding = embed_query(query)
-    embedding_ms = (time.perf_counter() - start) * 1000
 
     # ChromaDB vector search
-    start = time.perf_counter()
-    results = collection.query(query_embeddings=[query_embedding], n_results=candidate_k, where={"$or": [{"scope": "global"}, {"customer": customer_id}]},)
-    search_ms = (time.perf_counter() - start) * 1000
+    results = collection.query(
+        query_embeddings=[query_embedding],
+        n_results=candidate_k,
+        where={"$or": [{"scope": "global"}, {"customer": customer_id}]},
+    )
 
     # build hits
-    start = time.perf_counter()
     hits = []
     for doc, meta, dist in zip(results["documents"][0], results["metadatas"][0], results["distances"][0]):
         cleaned_doc = clean_retrieval_text(doc)
         if cleaned_doc:
             hits.append({"text": cleaned_doc, "metadata": meta, "distance": dist})
-    hits_ms = (time.perf_counter() - start) * 1000
 
     # reranking
-    start = time.perf_counter()
-    ranked_hits = rerank(query, hits, top_k=top_k)
-    rerank_ms = (time.perf_counter() - start) * 1000
-
-    # total retrieval time
-    total_ms = (time.perf_counter() - total_start) * 1000
-
-    # store metrics for Retrieve Agent
-    if metrics is not None:
-        metrics.update({
-            "collection_ms": collection_ms,
-            "embedding_ms": embedding_ms,
-            "search_ms": search_ms,
-            "hits_ms": hits_ms,
-            "rerank_ms": rerank_ms,
-            "total_ms": total_ms,
-            "candidate_k": candidate_k,
-            "result_count": len(ranked_hits)
-        })
+    reranked_hits = rerank(query, hits, top_k=len(hits))
+    lexical_hits = lexical_rank(query, hits)
+    fused_hits = fuse_rankings(hits, reranked_hits, lexical_hits)
+    ranked_hits = select_hits(fused_hits, top_k)
+    expand_hits(collection, ranked_hits, config.CONTEXT_EXPAND_TOP)
 
     return ranked_hits
-
-
-def retrieve_results(
-    query: str,
-    customer_id: int,
-    k_cases: int,
-    k_kb: int,
-) -> List[dict]:
-    if isinstance(customer_id, bool) or not isinstance(customer_id, int) or customer_id <= 0:
-        raise ValueError("customer_id must be a positive integer for tenant-scoped retrieval")
-    for name, value in (("k_cases", k_cases), ("k_kb", k_kb)):
-        if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100:
-            raise ValueError(f"{name} must be an integer between 0 and 100")
-    if not query.strip():
-        raise ValueError("query must not be empty")
-    if k_cases == 0 and k_kb == 0:
-        return []
-
-    collection = get_collection()
-    collection_count = collection.count()
-    if collection_count == 0:
-        return []
-
-    query_embedding = embed_query(query)
-    results = []
-    for is_case, limit in ((True, k_cases), (False, k_kb)):
-        if limit == 0:
-            continue
-
-        where = (
-            {"$and": [{"category": "incident_history"}, {"customer": customer_id}]}
-            if is_case
-            else {"category": {"$ne": "incident_history"}}
-        )
-        candidate_k = min(max(limit * 4, config.RERANK_CANDIDATES), collection_count)
-        matches = collection.query(
-            query_embeddings=[query_embedding],
-            n_results=candidate_k,
-            where=where,
-        )
-        ids = matches.get("ids", [[]])[0]
-        documents = matches.get("documents", [[]])[0]
-        metadatas = matches.get("metadatas", [[]])[0]
-        hits = []
-        for record_id, document, metadata in zip(ids, documents, metadatas):
-            cleaned_text = clean_retrieval_text(document or "")
-            if cleaned_text:
-                hits.append({
-                    "id": record_id,
-                    "text": cleaned_text,
-                    "metadata": metadata or {},
-                })
-
-        ranked_hits = rerank(query, hits, top_k=len(hits))
-        seen_sources = set()
-        group_count = 0
-        for hit in ranked_hits:
-            metadata = hit["metadata"]
-            source = metadata.get("source", hit["id"])
-            if source in seen_sources:
-                continue
-            seen_sources.add(source)
-
-            result_id = metadata.get("record_id")
-            if not isinstance(result_id, int) or isinstance(result_id, bool):
-                result_id = source
-                if is_case and isinstance(source, str) and source.startswith("incident_history::"):
-                    source_id = source.removeprefix("incident_history::").split("::", 1)[0]
-                    if source_id.isdigit():
-                        result_id = int(source_id)
-
-            results.append({
-                "type": "case" if is_case else "kb",
-                "id": result_id,
-                "title": metadata.get("title") or hit["text"].splitlines()[0][:160],
-                "text": hit["text"],
-                "score": float(hit["rerank_score"]),
-            })
-            group_count += 1
-            if group_count == limit:
-                break
-
-    return results
-
 
 def format_context(hits: List[dict]) -> str:
     if not hits:
