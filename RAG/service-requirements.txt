@@ -4,3 +4,4 @@ pydantic>=2.0.0
 psycopg2-binary>=2.9.9
 sentence-transformers>=3.0.0
 uvicorn[standard]>=0.27.0
+jq

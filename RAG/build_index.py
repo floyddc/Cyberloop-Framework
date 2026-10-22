@@ -1,9 +1,14 @@
+import argparse
 from .ingestion import build_chunks, load_new_database_documents
 from .knowledge_store import IndexStateStore
-from .vector_store import index_records
+from .vector_store import index_records, reset_collection
 
-def main():
+def main(reset: bool = False):
     state_store = IndexStateStore()
+    if reset:
+        state_store.reset_cursor("kb_documents")
+        state_store.reset_cursor("incident_history")
+        reset_collection()
     knowledge_cursor = state_store.get_cursor("kb_documents")
     history_cursor = state_store.get_cursor("incident_history")
     documents, knowledge_rows, history_rows = load_new_database_documents(
@@ -38,4 +43,11 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="Rebuild the vector index from database records and reset index cursors",
+    )
+    main(reset=parser.parse_args().reset)

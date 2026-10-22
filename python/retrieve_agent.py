@@ -1,29 +1,19 @@
-from typing import Any, Dict, Optional
-import config
+﻿from typing import Any
 import json
-import logging as logging
-import logging as _logging
-import argparse
-from RAG.context_builder import build_context
 from RAG.retriever import retrieve_results as retrieve_rag_results
 
-logger = logging.getLogger(__name__)
 
 class RetrieveAgent:
 
-    def __init__(self, top_k: int = config.TOP_K):
-        self.top_k = top_k
-        self.logger = logger
-
-    def retrieve_results(
+    def retrieve(
         self,
-        query: str,
+        incident_or_query: Any,
         customer_id: int,
         k_cases: int,
         k_kb: int,
     ) -> list[dict]:
         return retrieve_rag_results(
-            query,
+            self._incident_to_query(incident_or_query),
             customer_id=customer_id,
             k_cases=k_cases,
             k_kb=k_kb,
@@ -93,40 +83,3 @@ class RetrieveAgent:
 
         return json.dumps(incident, ensure_ascii=False, default=str)
 
-    
-    def retrieve(self, incident_or_query: Any, incident_id: int = None, customer_id: Optional[int] = None) -> Dict[str, str]:
-        q = self._incident_to_query(incident_or_query)
-        if isinstance(incident_or_query, dict):
-            incident_customer_id = incident_or_query.get("customer_id")
-            if customer_id is not None and customer_id != incident_customer_id:
-                raise ValueError("customer_id does not match the incident tenant")
-            customer_id = incident_customer_id
-
-        context = ""
-        
-        try:
-            if isinstance(customer_id, bool) or not isinstance(customer_id, int) or customer_id <= 0:
-                raise ValueError("customer_id must be a positive integer for tenant-scoped retrieval")
-            
-            context = build_context(q, customer_id=customer_id, top_k=self.top_k)
-            return {"query": q, "context": context}
-
-        except Exception as exc:
-            self.logger.exception("Retrieve failed")
-            return {"query": q, "error": str(exc)}
-
-
-if __name__ == "__main__":
-
-    _logging.basicConfig(level=_logging.INFO)
-    for lib in ("httpx", "sentence_transformers", "transformers", "urllib3", "chromadb"):
-        _logging.getLogger(lib).setLevel(_logging.WARNING)
-
-    agent = RetrieveAgent()
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--customer-id", required=True, type=int)
-    parser.add_argument("query", nargs="*")
-    args = parser.parse_args()
-    q = " ".join(args.query) or input("Incident or query: ")
-    out = agent.retrieve(q, customer_id=args.customer_id)
-    print(json.dumps(out, indent=2, ensure_ascii=False))

@@ -20,15 +20,19 @@ CACHE_DIR = os.environ.get(
     "CACHE_DIR",
     os.path.join(os.path.expanduser("~"), ".cache", "huggingface"),
 )
-OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 
 # RERANKER & EMBEDDER (CPU MODELS) ----------------------------------------------------------------------------------------------------------------------------------------------------------     
 CHUNK_SIZE = 300
 CHUNK_OVERLAP = 50
 TOP_K = 5
-RERANKER_MODEL = os.environ.get("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L2-v2")
+RERANKER_MODEL = os.environ.get("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
 RERANK_CANDIDATES = int(os.environ.get("RERANK_CANDIDATES", "10"))
-EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "intfloat/multilingual-e5-base")
+RERANK_MIN_SCORE = None         
+RERANK_SCORE_MARGIN = None      
+RERANK_FUSION_WEIGHT = 1.0      
+LEXICAL_FUSION_WEIGHT = 1.5     
+CONTEXT_EXPAND_TOP = 1  
 
 # DB ----------------------------------------------------------------------------------------------------------------------------------------------------------     
 POSTGRES_HOST = os.environ.get("POSTGRES_HOST", "localhost")

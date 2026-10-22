@@ -92,9 +92,9 @@ def health() -> dict:
 
 
 @app.post("/retrieve", response_model=list[RetrieveResult])
-def retrieve_results(request: RetrieveRequest) -> list[dict]:
+def retrieve(request: RetrieveRequest) -> list[dict]:
     _require_ready()
-    return RetrieveAgent().retrieve_results(
+    return RetrieveAgent().retrieve(
         request.query,
         customer_id=request.customer,
         k_cases=request.k_cases,

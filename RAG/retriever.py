@@ -2,7 +2,7 @@ import logging
 import math
 import re
 from collections import Counter
-from typing import List, Optional
+from typing import List, Literal, Optional
 import config
 from .embeddings import embed_query
 from .reranker import rerank
@@ -11,6 +11,7 @@ from .vector_store import get_collection
 
 logger = logging.getLogger(__name__)
 
+_RRF_K = 60
 _TECHNIQUE_ID = re.compile(r"(?<![A-Za-z0-9])[Tt](\d{4})(?:[._](\d{3}))?(?!\d)")
 _TOKEN = re.compile(r"[a-z0-9]+")
 _LEXICAL_STOP_WORDS = {
@@ -114,9 +115,6 @@ def select_hits(
     return selected
 
 
-_RRF_K = 60
-
-
 def fuse_rankings(
     vector_hits: List[dict],
     reranked_hits: List[dict],
@@ -180,6 +178,7 @@ def retrieve(
     query: str,
     customer_id: int,
     top_k: int = config.TOP_K,
+    result_kind: Optional[Literal["case", "kb"]] = None,
 ) -> List[dict]:
     if isinstance(customer_id, bool) or not isinstance(customer_id, int) or customer_id <= 0:
         raise ValueError("customer_id must be a positive integer for tenant-scoped retrieval")
@@ -196,10 +195,27 @@ def retrieve(
     query_embedding = embed_query(query)
 
     # ChromaDB vector search
+    if result_kind == "case":
+        where = {
+            "$and": [
+                {"category": "incident_history"},
+                {"customer": customer_id},
+            ]
+        }
+    elif result_kind == "kb":
+        where = {
+            "$and": [
+                {"scope": "global"},
+                {"category": {"$ne": "incident_history"}},
+            ]
+        }
+    else:
+        where = {"$or": [{"scope": "global"}, {"customer": customer_id}]}
+
     results = collection.query(
         query_embeddings=[query_embedding],
         n_results=candidate_k,
-        where={"$or": [{"scope": "global"}, {"customer": customer_id}]},
+        where=where,
     )
 
     # build hits
@@ -218,16 +234,48 @@ def retrieve(
 
     return ranked_hits
 
-def format_context(hits: List[dict]) -> str:
-    if not hits:
-        return "No relevant context found in the knowledge base."
 
-    context_parts = []
-    seen = set()
-    for hit in hits:
-        text = clean_retrieval_text(hit["text"])
-        if text and text not in seen:
-            context_parts.append(text)
-            seen.add(text)
+def retrieve_results(
+    query: str,
+    customer_id: int,
+    k_cases: int,
+    k_kb: int,
+) -> List[dict]:
+    if isinstance(customer_id, bool) or not isinstance(customer_id, int) or customer_id <= 0:
+        raise ValueError("customer_id must be a positive integer for tenant-scoped retrieval")
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError("query must be a non-empty string")
+    for name, limit in (("k_cases", k_cases), ("k_kb", k_kb)):
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 0 <= limit <= 100:
+            raise ValueError(f"{name} must be an integer between 0 and 100")
 
-    return "\n\n".join(context_parts) or "No relevant context found in the knowledge base."
+    results = []
+    for result_kind, limit in (("case", k_cases), ("kb", k_kb)):
+        if limit == 0:
+            continue
+        hits = retrieve(
+            query,
+            customer_id=customer_id,
+            top_k=limit,
+            result_kind=result_kind,
+        )
+        for hit in hits:
+            metadata = hit["metadata"]
+            record_id = metadata.get("record_id")
+            if result_kind == "case":
+                if isinstance(record_id, bool) or not isinstance(record_id, int):
+                    raise ValueError("Retrieved case is missing a numeric record_id")
+                result_id = record_id
+            else:
+                result_id = record_id or metadata.get("source", "")
+            results.append(
+                {
+                    "type": result_kind,
+                    "id": result_id,
+                    "title": metadata.get("title") or metadata.get("source", ""),
+                    "text": hit["text"],
+                    "score": float(hit["fused_score"]),
+                }
+            )
+
+    return sorted(results, key=lambda result: result["score"], reverse=True)

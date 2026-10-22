@@ -196,3 +196,15 @@ class IndexStateStore:
                 """,
                 (source, last_id),
             )
+
+    def reset_cursor(self, source: str) -> None:
+        with cursor(config.POSTGRES_KNOWLEDGE_DB) as cur:
+            cur.execute(
+                """
+                INSERT INTO index_cursors (source, last_id)
+                VALUES (%s, 0)
+                ON CONFLICT (source) DO UPDATE
+                SET last_id = 0, updated_at = now()
+                """,
+                (source,),
+            )
