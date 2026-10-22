@@ -1,41 +1,43 @@
 ```mermaid
 flowchart TD
-    Agent["Agente aziendale"] -->|"POST /retrieve<br/>customer, query, k_cases, k_kb"| API["Servizio HTTP RAG<br/>FastAPI"]
-
-    Agent -->|"GET /health"| Health["Controllo readiness"]
-    Health --> Ready{"Embedding e reranker<br/>caricati?"}
-    Ready -->|"Sì"| HealthOK["200 OK"]
+    Agent["Cyberloop Agent"] -->|"POST /retrieve<br/>customer, query, k_cases, k_kb"| API["Servizio HTTP<br/>FastAPI"]
+    Agent -->|"GET /health"| Ready{"Embedding Model e <br/>Cross-Encoder Reranker caricati?"}
+    
     Ready -->|"No"| HealthWait["503 Service Unavailable"]
+    Ready -->|"Sì"| HealthOK["200 OK"]
+    HealthOK --> |"Procedi"|Agent
 
-    API --> Validate["Validazione della richiesta"]
-    Validate --> Embed["Embedding della query<br/>multilingual-e5"]
-    Embed --> CaseSearch["Ricerca case storici<br/>in Chroma"]
-    Embed --> KBSearch["Ricerca knowledge base<br/>in Chroma"]
+    
+
+    API --> Validate["Validazione alert/query"]
+    Validate --> Embed["Creazione embedding<br/>(Embedding Model)"]
+    Embed --> CaseSearch["Ricerca case storici<br/>in ChromaDB"]
+    Embed --> KBSearch["Ricerca knowledge base<br/>in ChromaDB"]
 
     CaseSearch --> CaseFilter["Filtro obbligatorio:<br/>category = incident_history<br/>e customer = customer richiesto"]
-    KBSearch --> KBFilter["Filtro documenti condivisi:<br/>category ≠ incident_history"]
+    KBSearch --> KBFilter["Filtro docs condivisi"]
 
-    CaseFilter --> CaseRerank["Reranking dei case<br/>cross-encoder"]
-    KBFilter --> KBRerank["Reranking dei documenti<br/>cross-encoder"]
+    CaseFilter --> CaseRerank["Reranking dei case pertinenti<br/>(Cross-Encoder Reranker)"]
+    KBFilter --> KBRerank["Reranking dei docs pertinenti<br/>(Cross-Encoder Reranker)"]
 
-    CaseRerank --> CaseLimit["Deduplicazione per sorgente<br/>e limite k_cases"]
-    KBRerank --> KBLimit["Deduplicazione per sorgente<br/>e limite k_kb"]
+    CaseRerank --> CaseLimit["Deduplicazione e <br/> k_cases come limite max"]
+    KBRerank --> KBLimit["Deduplicazione e <br/> k_kb come limite max"]
 
     CaseLimit --> Merge["Unione dei risultati"]
     KBLimit --> Merge
-    Merge --> Response["Lista di risultati:<br/>type, id, title, text, score"]
+    Merge --> Response["Contesto recuperato (cases/docs):<br/>type, id, title, text, score"]
     Response --> Agent
 
     subgraph Indexing["Gestione dei case storici"]
-        Client["Chiamante"] -->|"POST /index/cases"| Upsert["Inserimento o aggiornamento"]
+        Client["Analyst"] -->|"POST /index/cases"| Upsert["INSERT/UPDATE cases"]
         Upsert --> DB["PostgreSQL<br/>incident_history"]
         Upsert --> Chunks["Creazione chunk<br/>e embedding"]
-        Chunks --> Chroma["Chroma<br/>indice vettoriale"]
-        Client -->|"DELETE /index/cases/{id}"| Delete["Eliminazione case"]
+        Chunks --> ChromaDB["ChromaDB<br/>indice vettoriale"]
+        Client -->|"DELETE /index/cases/{id}"| Delete["DELETE case"]
         Delete --> DB
-        Delete --> Chroma
+        Delete --> ChromaDB
     end
 
-    CaseSearch -.-> Chroma
-    KBSearch -.-> Chroma
+    CaseSearch -.-> ChromaDB
+    KBSearch -.-> ChromaDB
 ```

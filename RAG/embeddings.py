@@ -5,7 +5,6 @@ import config
 _MAX_PROMPT_CHARS = 1600
 _model = None
 
-
 def _get_model():
     global _model
     if _model is None:

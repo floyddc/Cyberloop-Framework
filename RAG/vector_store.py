@@ -10,9 +10,7 @@ def _client() -> chromadb.PersistentClient:
     return chromadb.PersistentClient(path=config.INDICES_DIR)
 
 def get_collection():
-    return _client().get_or_create_collection(
-        name=config.COLLECTION_NAME
-    )
+    return _client().get_or_create_collection(name=config.COLLECTION_NAME)
 
 def reset_collection():
     client = _client()
@@ -22,9 +20,7 @@ def reset_collection():
     except chromadb.errors.NotFoundError:
         pass
 
-    return client.get_or_create_collection(
-        name=config.COLLECTION_NAME
-    )
+    return client.get_or_create_collection(name=config.COLLECTION_NAME)
 
 def index_records(records: List[dict], reset: bool = False) -> int:
 
