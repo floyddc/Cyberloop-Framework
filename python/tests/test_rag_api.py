@@ -22,7 +22,7 @@ class RagApiTests(unittest.TestCase):
 
     @patch("RAG.api.RetrieveAgent")
     def test_retrieve_delegates_to_retrieve_agent(self, retrieve_agent_class):
-        retrieve_agent_class.return_value.retrieve_results.return_value = [
+        retrieve_agent_class.return_value.retrieve.return_value = [
             {
                 "type": "case",
                 "id": 8,
@@ -52,11 +52,40 @@ class RagApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(len(response.json()), 2)
-        retrieve_agent_class.return_value.retrieve_results.assert_called_once_with(
+        retrieve_agent_class.return_value.retrieve.assert_called_once_with(
             "suspicious activity",
             customer_id=123,
             k_cases=2,
             k_kb=1,
+        )
+
+    @patch("RAG.api.RetrieveAgent")
+    def test_retrieve_passes_structured_alert_to_retrieve_agent(self, retrieve_agent_class):
+        alert = {
+            "alert_title": "Suspicious email with malicious attachment",
+            "alert_customer_id": 123,
+            "alert_iocs": [{"ioc_description": "Macro-enabled malicious document"}],
+        }
+        retrieve_agent_class.return_value.retrieve.return_value = []
+
+        with patch("RAG.api._warm_models"), TestClient(app) as client:
+            response = client.post(
+                "/retrieve",
+                json={
+                    "customer": 123,
+                    "alert": alert,
+                    "k_cases": 0,
+                    "k_kb": 10,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), [])
+        retrieve_agent_class.return_value.retrieve.assert_called_once_with(
+            alert,
+            customer_id=123,
+            k_cases=0,
+            k_kb=10,
         )
 
     @patch("RAG.api.replace_source_records")
@@ -105,6 +134,24 @@ class RagApiTests(unittest.TestCase):
                 "/retrieve",
                 json={"customer": "tenant-a", "query": "suspicious activity"},
             )
+
+        self.assertEqual(response.status_code, 422)
+
+    def test_retrieve_rejects_alert_customer_mismatch(self):
+        with patch("RAG.api._warm_models"), TestClient(app) as client:
+            response = client.post(
+                "/retrieve",
+                json={
+                    "customer": 123,
+                    "alert": {"alert_customer_id": 456, "alert_title": "Suspicious email"},
+                },
+            )
+
+        self.assertEqual(response.status_code, 422)
+
+    def test_retrieve_requires_exactly_one_input(self):
+        with patch("RAG.api._warm_models"), TestClient(app) as client:
+            response = client.post("/retrieve", json={"customer": 123})
 
         self.assertEqual(response.status_code, 422)
 

@@ -3,12 +3,22 @@
 Servizio RAG da integrare nell'infrastruttura Cyberloop. Tramite API, viene chiamato un Retrieve Agent che recupera contesto utile partendo dall'alert in input, 
 servendosi del RAG (Retrieve Augmented Generation). Il resto dell'infrastruttura (Triage, Action Planning, Contenimento) non è incluso nella seguente repo.
 
+- [Download datasets](#download-datasets)
+- [Popolare DB con datasets](#popolare-db-con-datasets)
+- [Indicizzare knowledge base](#indicizzare-knowledge-base)
+- [Invio alert](#invio-alert)
+  - [Powershell](#powershell)
+  - [Bash](#bash)
+- [Invio alert (stampa solo contesto)](#invio-alert-stampa-solo-contesto)
+  - [Powershell](#powershell-1)
+  - [Bash](#bash-1)
+
 ## Download datasets
 ```powershell
 ./fetch_datasets.sh
 ```
 
-## Popolamento DB con datasets
+## Popolare DB con datasets
 ```powershell
 ./seed_DB.sh
 ```
@@ -22,23 +32,25 @@ servendosi del RAG (Retrieve Augmented Generation). Il resto dell'infrastruttura
 
 ### Powershell
 ```powershell
-$alert = Get-Content .\knowledge\raw_data\edr_alerts\test_alert3.json -Raw | ConvertFrom-Json
-$query = "$($alert.alert). $($alert.message). $($alert.command_line)"
+$alert = Get-Content .\knowledge\raw_data\edr_alerts\test_alert4.json -Raw | ConvertFrom-Json
+$body = @{
+  customer = $alert.alert_customer_id
+  alert = $alert
+  k_cases = 0
+  k_kb = 10
+} | ConvertTo-Json -Depth 20 -Compress
 
-@{ customer = 1; query = $query; k_cases = 3; k_kb = 3 } |
-  ConvertTo-Json -Compress |
-  curl.exe -sS -X POST http://localhost:8000/retrieve `
-    -H "Content-Type: application/json" --data-binary "@-"
+$body | curl.exe -sS -X POST http://localhost:8000/retrieve `
+  -H "Content-Type: application/json" --data-binary "@-"
 ```
 
 ### Bash
 ```bash
-query=$(jq -r '"\(.alert). \(.message). \(.command_line)"' \
-  knowledge/raw_data/edr_alerts/test_alert3.json)
+file=knowledge/raw_data/edr_alerts/test_alert4.json
 
 jq -n \
-  --arg query "$query" \
-  '{customer: 1, query: $query, k_cases: 3, k_kb: 3}' |
+  --slurpfile alert "$file" \
+  '{customer: $alert[0].alert_customer_id, alert: $alert[0], k_cases: 0, k_kb: 10}' |
   curl -sS -X POST http://localhost:8000/retrieve \
     -H "Content-Type: application/json" \
     --data-binary @-
@@ -49,10 +61,12 @@ jq -n \
 ### Powershell
 ```powershell
 $alert = Get-Content .\knowledge\raw_data\edr_alerts\test_alert4.json -Raw | ConvertFrom-Json
-$query = "$($alert.alert). $($alert.message). $($alert.command_line)"
-
-$body = @{ customer = 1; query = $query; k_cases = 0; k_kb = 3 } |
-  ConvertTo-Json -Compress
+$body = @{
+  customer = $alert.alert_customer_id
+  alert = $alert
+  k_cases = 0
+  k_kb = 10
+} | ConvertTo-Json -Depth 20 -Compress
 
 $response = $body |
   curl.exe -sS -X POST http://localhost:8000/retrieve `
@@ -66,13 +80,12 @@ $context
 
 ### Bash
 ```bash
-query=$(jq -r '"\(.alert). \(.message). \(.command_line)"' \
-  knowledge/raw_data/edr_alerts/test_alert4.json)
+file=knowledge/raw_data/edr_alerts/test_alert4.json
 
 context=$(
   jq -n \
-    --arg query "$query" \
-    '{customer: 1, query: $query, k_cases: 0, k_kb: 3}' |
+    --slurpfile alert "$file" \
+    '{customer: $alert[0].alert_customer_id, alert: $alert[0], k_cases: 0, k_kb: 10}' |
   curl -sS -X POST http://localhost:8000/retrieve \
     -H "Content-Type: application/json" \
     --data-binary @- |

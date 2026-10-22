@@ -2,7 +2,7 @@ import logging
 import os
 import sys
 from contextlib import asynccontextmanager
-from typing import Annotated, Literal, Optional
+from typing import Annotated, Any, Literal, Optional
 from fastapi import FastAPI, HTTPException, Path
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 from python.retrieve_agent import RetrieveAgent
@@ -23,9 +23,32 @@ class RetrieveRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     customer: CustomerId
-    query: str = Field(min_length=1, max_length=1600)
+    query: Optional[str] = Field(default=None, min_length=1, max_length=1600)
+    alert: Optional[dict[str, Any]] = None
     k_cases: int = Field(default=5, ge=0, le=100)
     k_kb: int = Field(default=5, ge=0, le=100)
+
+    @model_validator(mode="after")
+    def validate_retrieval_input(self) -> "RetrieveRequest":
+        if (self.query is None) == (self.alert is None):
+            raise ValueError("Provide exactly one of 'query' or 'alert'")
+
+        if self.alert is not None:
+            if not self.alert:
+                raise ValueError("alert must be a non-empty object")
+
+            alert_customer = self.alert.get("alert_customer_id")
+            if alert_customer is not None:
+                if (
+                    isinstance(alert_customer, bool)
+                    or not isinstance(alert_customer, int)
+                    or alert_customer <= 0
+                ):
+                    raise ValueError("alert.alert_customer_id must be a positive integer")
+                if alert_customer != self.customer:
+                    raise ValueError("customer must match alert.alert_customer_id")
+
+        return self
 
 
 class CaseInput(BaseModel):
@@ -94,8 +117,14 @@ def health() -> dict:
 @app.post("/retrieve", response_model=list[RetrieveResult])
 def retrieve(request: RetrieveRequest) -> list[dict]:
     _require_ready()
+    incident_or_query = request.alert if request.alert is not None else request.query
+    if incident_or_query is None:
+        raise HTTPException(
+            status_code=422,
+            detail="Provide exactly one of 'query' or 'alert'",
+        )
     return RetrieveAgent().retrieve(
-        request.query,
+        incident_or_query,
         customer_id=request.customer,
         k_cases=request.k_cases,
         k_kb=request.k_kb,
