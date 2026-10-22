@@ -15,13 +15,13 @@ servendosi del RAG (Retrieve Augmented Generation). Il resto dell'infrastruttura
 
 ## Setup
 ```powershell
-git clone https://github.com/floyddc/Cyberloop-Framework.git
-cd Cyberloop-Framework/
+git clone https://github.com/floyddc/Cyberloop-RAG-Service.git  # oppure download della release
+cd <REPOSITORY>
 chmod +x *
-echo "<HF_TOKEN>" > .env 
+echo "<HF_TOKEN>" > .env # sostituire con token HuggingFace, nel formato HF_TOKEN=xxxxxxxxxxxxx
 pip install -r python/requirements.txt
 ```
-- Sostituisci `HF_TOKEN` con il tuo token HuggingFace, nel formato `HF_TOKEN=xxxxxxxxxxxxx`.
+- Sostituisci `HF_TOKEN` .
 
 ## Download datasets
 ```powershell
